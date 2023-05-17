@@ -1,0 +1,626 @@
+# load necessary libraries
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(stringr)
+
+# load the data
+data_sales <- read.delim("data_sales.csv", sep = "\t")
+summary(data_sales)
+
+### Data manipulation
+# 1 check for outliers
+boxplot_stats <- boxplot.stats(data_sales$CPN)
+outliers <- boxplot_stats$out
+
+ggplot(data_sales, aes(x = "", y = CPN)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of CPN",
+       y = "CPN")
+
+# Remove extra spaces from "pos_market" column
+data_sales$pos_market <- str_trim(data_sales$pos_market, side = "right")
+
+# Convert to date format
+data_sales$month_sale <- as.Date(paste0(data_sales$month_sale,"01"), format = "%Y%m%d")
+# Convert to text format
+  data_sales$month_departure_text <- format(as.Date(paste0(data_sales$month_departure, "01"), format = "%mmmm"), format = "%b")
+  # Custom function to convert month number to month name
+  convert_month <- function(month_number) {
+   month_names <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "July", "Aug", "Sep", "Oct", "Nov", "Dec")
+    if (month_number == "202207") {
+      return("July")
+    } else {
+      return(month_names[as.numeric(substr(month_number, 5, 6))])
+    }
+  }
+
+  # Convert month_departure to month names
+   data_sales$month_departure_text <- sapply(data_sales$month_departure, convert_month)
+
+# mutate the data
+data_sales <- data_sales %>%
+  mutate(
+    # extract year from the month_sale
+    year_sale = as.integer(substr(month_sale, 1, 4)),
+    # # extract month from the month_sale
+    onlymonth_sale = as.integer(substr(month_sale, 5, 6)),
+    
+    # ensure journey_ond_cntry_cd has exactly 5 characters
+    journey_ond_cntry_cd = ifelse(nchar(journey_ond_cntry_cd) < 5, 
+                                  paste0(journey_ond_cntry_cd, strrep(" ", 5 - nchar(journey_ond_cntry_cd))),
+                                  substr(journey_ond_cntry_cd, 1, 5)),
+    
+    # create new columns based on journey_ond_cntry_cd
+    Journey_ond_cntry_dpt = substr(journey_ond_cntry_cd, 1, 2),
+    Journey_ond_cntry_arr = substr(journey_ond_cntry_cd, 4, 5),
+    
+    # ensure journey_ond_city_cd has exactly 7 characters
+    journey_ond_city_cd = ifelse(nchar(journey_ond_city_cd) < 7, 
+                                  paste0(journey_ond_city_cd, strrep(" ", 7 - nchar(journey_ond_city_cd))),
+                                  substr(journey_ond_city_cd, 1, 7)),
+    
+    # create new columns based on journey_ond_cntry_cd
+    Journey_ond_city_dpt = substr(journey_ond_city_cd, 1, 3),
+    Journey_ond_city_arr = substr(journey_ond_city_cd, 5, 7)
+  )
+
+# view the first few rows
+head(data_sales)
+
+##Join data_geography
+# read data_geography
+data_geography <- read.delim("data_geography.csv", sep = "\t", na.strings = "") %>%
+  distinct(CITY_CD, .keep_all = TRUE)
+# join data with data_geography based on Journey_ond_city_arr
+data_sales <- data_sales %>%
+  left_join(data_geography, by = c("Journey_ond_city_arr" = "CITY_CD"))
+
+# rename the columns from data_geography to indicate they are related to arrival city
+colnames(data_sales)[which(names(data_sales) %in% c("CITY_NM", "CNTRY_CD", "CNTRY_NM", "AREA_CD", "AREA_NM", "MARKET_AREA"))] <- 
+  paste("Arr", c("CITY_NM", "CNTRY_CD", "CNTRY_NM", "AREA_CD", "AREA_NM", "MARKET_AREA"), sep = "_")
+
+# join data with data_geography based on Journey_ond_city_dpt
+data_sales <- data_sales %>%
+  left_join(data_geography, by = c("Journey_ond_city_dpt" = "CITY_CD"))
+
+# rename the columns from data_geography to indicate they are related to departure city
+colnames(data_sales)[which(names(data_sales) %in% c("CITY_NM", "CNTRY_CD", "CNTRY_NM", "AREA_CD", "AREA_NM", "MARKET_AREA"))] <- 
+  paste("Dpt", c("CITY_NM", "CNTRY_CD", "CNTRY_NM", "AREA_CD", "AREA_NM", "MARKET_AREA"), sep = "_")
+
+# view the first few rows
+head(data_sales)
+
+##Join on Sales country
+# Create a new data set with distinct CNTRY_CD
+#distinct_countries <- data_geography %>%
+ # distinct(CNTRY_CD, CNTRY_NM, AREA_CD, AREA_NM, MARKET_AREA, .keep_all = FALSE)
+
+# Join distinct_countries with data_sales on Sales_country
+#data_sales <- data_sales %>%
+  #left_join(distinct_countries, by = c("Sales_country" = "CNTRY_CD"))
+
+# rename the columns from distinct_countries to indicate they are related to Sales_country
+#colnames(data_sales)[which(names(data_sales) %in% c("CNTRY_NM", "AREA_CD", "AREA_NM", "MARKET_AREA"))] <- 
+  #paste("Sales", c("CNTRY_NM", "AREA_CD", "AREA_NM", "MARKET_AREA"), sep = "_")
+
+# View the first few rows
+#head(data_sales)
+
+################################################################################
+
+#################################NYC AG_W focus
+
+### Learn about 2022
+
+# Filter data_sales for pos_market = "NYC AG_W"
+Sales_NYC <- data_sales %>%
+  filter(pos_market == "NYC AG-W")
+
+###################Check the target
+
+
+# Define the revenue targets in percent
+revenue_targets <- c("July" = 1.15, "Aug" = 1.25, "Sep" = 1.26)
+
+# Filter data for the specific months and calculate target revenue
+Sales_NYC_targets <- Sales_NYC %>%
+  filter(month_departure_text %in% names(revenue_targets)) %>%
+  mutate(target_revenue_GrossYQ = revenue_GrossYQ_py * revenue_targets[month_departure_text])
+
+# Plot actual and target revenue
+ggplot(data = Sales_NYC_targets, aes(x = month_departure_text, group = month_departure_text)) +
+  geom_line(aes(y = revenue_GrossYQ, color = "Actual Revenue")) +
+  geom_line(aes(y = target_revenue_GrossYQ, color = "Target Revenue")) +
+  scale_color_discrete(name = "Legend") +
+  labs(x = "Month", y = "Revenue", title = "Actual vs. Target Revenue by Month") +
+  theme_minimal()
+
+# Convert data from wide to long format for plotting
+Sales_NYC_targets_long <- Sales_NYC_targets %>%
+  select(month_departure_text, revenue_GrossYQ, target_revenue_GrossYQ) %>%
+  tidyr::pivot_longer(cols = -month_departure_text, names_to = "Revenue Type", values_to = "Revenue")
+
+ggplot(data = Sales_NYC_targets_long, aes(x = month_departure_text, y = Revenue, fill = `Revenue Type`)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Month", y = "Revenue", fill = "Revenue Type", title = "Actual vs. Target Revenue by Month") +
+  theme_minimal()
+
+
+#Print results
+Sales_NYC_targets_summary <- Sales_NYC_targets %>%
+  group_by(month_departure_text) %>%
+  summarise(
+    total_revenue_GrossYQ = sum(revenue_GrossYQ, na.rm = TRUE),
+    total_target_revenue_GrossYQ = sum(target_revenue_GrossYQ, na.rm = TRUE)
+  )
+
+print(Sales_NYC_targets_summary)
+
+
+###################Plot month Date ##################
+
+# Plot historical sales over time
+ggplot(data = Sales_NYC, aes(x = month_sale, y = revenue_GrossYQ)) + geom_line()
+
+##Plot Revenue by purchase date
+# Make sure month_sale is of Date type
+Sales_NYC$month_sale <- as.Date(Sales_NYC$month_sale)
+# Create a new column with just the year and month
+Sales_NYC$year_month <- format(Sales_NYC$month_sale, "%Y-%m")
+# Summarize data by year_month
+Sales_NYC_summary <- Sales_NYC %>%
+  group_by(year_month) %>%
+  summarize(Revenue_sum = sum(revenue_GrossYQ, na.rm = TRUE))
+# Add "-01" to represent the first day of each month
+Sales_NYC_summary$year_month <- paste(Sales_NYC_summary$year_month, "-01", sep = "")
+
+# Plot historical sales over time
+ggplot(data = Sales_NYC_summary, aes(x = as.Date(year_month), y = Revenue_sum)) + 
+  geom_line() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b-%Y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  labs(x="month of sale", y = "Gross + yq", title = "Historical Sales over Time by departure month")
+
+
+##Plot revenue by purchase date and departure month
+# Summarize data by year_month
+Sales_NYC_summary <- Sales_NYC %>%
+  group_by(year_month, month_departure_text) %>%
+  summarize(Revenue_sum = sum(revenue_GrossYQ, na.rm = TRUE))
+# Add "-01" to represent the first day of each month
+Sales_NYC_summary$year_month <- paste(Sales_NYC_summary$year_month, "-01", sep = "")
+# Convert to text format
+Sales_NYC_summary$month_sale_text <- format(Sales_NYC_summary$month_departure_text, format = "%b")
+
+# Plot historical sales over time with color based on month_departure
+ggplot(data = Sales_NYC_summary, aes(x = as.Date(year_month), y = Revenue_sum, colour = month_departure_text)) + 
+  geom_line() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b-%Y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(colour = "Month Departure",x="month of sale", y = "Gross + yq", title = "Historical Sales over Time by departure month")
+
+
+####################### MAP ##################################
+data_aggregated <- Sales_NYC %>%
+  group_by(Dpt_CNTRY_NM) %>%
+  summarise(CPN_sum = sum(CPN, na.rm = TRUE))
+
+# Load necessary packages
+library(rworldmap)
+library(leaflet)
+
+###Look at departure countries in volume of coupons
+# Get world map data
+world_map <- getMap()
+
+# Join the world map data with your aggregated data
+data_map <- joinCountryData2Map(data_aggregated, joinCode = "NAME", nameJoinColumn = "Dpt_CNTRY_NM")
+
+# Create the map with leaflet
+leaflet(data = data_map) %>%
+  addTiles() %>%
+  addPolygons(fillColor = ~colorNumeric(palette = "viridis", domain = data_map$CPN_sum)(CPN_sum),
+              fillOpacity = 0.8, 
+              color = "#BDBDC3", 
+              weight = 1) %>%
+  addLegend(pal = colorNumeric(palette = "viridis", domain = data_map$CPN_sum), 
+            values = data_map$CPN_sum, 
+            title = "Sum of CPN",
+            opacity = 1)
+
+data_aggregated_Arr <- Sales_NYC %>%
+  group_by(Arr_CNTRY_NM) %>%
+  summarise(CPN_sum = sum(CPN, na.rm = TRUE))
+
+###Look at destination countries in volume of coupons
+# Get world map data
+world_map <- getMap()
+
+# Join the world map data with your aggregated data
+data_map <- joinCountryData2Map(data_aggregated_Arr, joinCode = "NAME", nameJoinColumn = "Arr_CNTRY_NM")
+
+# Create the map with leaflet
+leaflet(data = data_map) %>%
+  addTiles() %>%
+  addPolygons(fillColor = ~colorNumeric(palette = "viridis", domain = data_map$CPN_sum)(CPN_sum),
+              fillOpacity = 0.8, 
+              color = "#BDBDC3", 
+              weight = 1) %>%
+  addLegend(pal = colorNumeric(palette = "viridis", domain = data_map$CPN_sum), 
+            values = data_map$CPN_sum, 
+            title = "Sum of CPN",
+            opacity = 1)
+
+
+###############################################################
+### forecast for 20223 using bayesian method ####
+
+# Load necessary packages
+library(tidyverse)
+library(lubridate)
+
+
+df <- Sales_NYC
+
+df <- df %>%
+  mutate(
+    revenue_growth = ifelse(revenue_GrossYQ_py == 0,
+                            ifelse(revenue_GrossYQ == 0, 0, 1), #new customer, could come back
+                            ifelse(revenue_GrossYQ == 0, -1, (revenue_GrossYQ - revenue_GrossYQ_py) / revenue_GrossYQ_py)),# potential lost customer, could not come back
+  )
+
+# Check any NA values in revenue_growth
+if (any(is.na(df$revenue_growth))) {
+  print("NA values")
+} else {
+  print("no NA values")
+}
+
+# Calculate the sample mean and standard deviation of the revenue growth
+sample_mean <- mean(df$revenue_growth, na.rm = TRUE)
+sample_sd <- sd(df$revenue_growth, na.rm = TRUE)
+
+# Check the values of the sample mean and standard deviation
+print(paste("Sample mean: ", round(sample_mean, 2)))
+print(paste("Sample standard deviation: ", round(sample_sd, 2)))
+
+# Define prior mean and standard deviation
+prior_mean <- ((779-727)/727) # Growth in line with IATA article https://www.iata.org/en/pressroom/2022-releases/2022-12-06-01/ . 
+prior_sd <- 3 #Medium standard deviation as historical data are only for 1 year, yet with a large data set
+
+# Calculate the posterior mean and standard deviation
+posterior_mean <- (prior_mean / prior_sd^2 + sample_mean / sample_sd^2) / (1 / prior_sd^2 + 1 / sample_sd^2)
+posterior_sd <- sqrt(1 / (1 / prior_sd^2 + 1 / sample_sd^2))
+
+# Print the posterior mean and standard deviation
+print(paste("Posterior mean: ", round(posterior_mean, 2)))
+print(paste("Posterior standard deviation: ", round(posterior_sd, 2)))
+
+# Calculate forecasted revenue for 2023
+df$revenue_GrossYQ_2023 <- df$revenue_GrossYQ * (1 + posterior_mean)
+
+# Print out the forecasted revenue
+sum(df$revenue_GrossYQ_2023)
+sum(df$revenue_GrossYQ)
+
+# Visualise it
+ggplot(data = df, aes(x = month_departure_text, y = revenue_GrossYQ_2023)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Month", y = "Revenue", title = "Forecast by month") +
+  theme_minimal()
+
+
+# Convert data to long format
+df_long <- df %>%
+  select(month_departure_text, revenue_GrossYQ_py, revenue_GrossYQ, revenue_GrossYQ_2023) %>%
+  rename(revenue_GrossYQ_2021 = revenue_GrossYQ_py,
+         revenue_GrossYQ_2022 = revenue_GrossYQ ,
+         revenue_GrossYQ_2023 = revenue_GrossYQ_2023) %>%
+  pivot_longer(cols = starts_with("revenue"), 
+               names_to = "Year", 
+               values_to = "Revenue")
+
+# Plot the bar chart
+ggplot(df_long, aes(x = month_departure_text, y = Revenue, fill = Year)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Month", y = "Revenue", fill = "Year", title = "Revenue comparison by month") +
+  theme_minimal()
+
+#Print results
+summary_table <- df_long %>%
+  group_by(Year, month_departure_text) %>%
+  summarize(Revenue = sum(Revenue))
+
+print(summary_table)
+
+
+################# TEST #############################
+##Cross-Validation test
+# Split data into training and test set
+set.seed(123456)
+train_ind <- sample(seq_len(nrow(df)), size = 0.8*nrow(df))
+train_df <- df[train_ind, ]
+test_df <- df[-train_ind, ]
+
+# Estimate model parameters using training data and calculate forecast
+sample_mean_train <- mean(train_df$revenue_growth, na.rm = TRUE)
+sample_sd_train <- sd(train_df$revenue_growth, na.rm = TRUE)
+posterior_mean_train <- (prior_mean / prior_sd^2 + sample_mean_train / sample_sd_train^2) / (1 / prior_sd^2 + 1 / sample_sd_train^2)
+
+# Predict on test set
+test_df$predicted_revenue <- test_df$revenue_GrossYQ * (1 + posterior_mean_train)
+
+# Calculate prediction error
+prediction_error <- mean((test_df$predicted_revenue - test_df$revenue_GrossYQ)^2, na.rm = TRUE)
+print(paste("Prediction error: ", round(prediction_error, 2)))
+print(paste("Prediction error %: ", round(prediction_error/sum(df$revenue_GrossYQ_2023),3)))
+
+
+###Bootstrap Resampling
+# Initialize a vector to store bootstrap results
+bootstrap_results <- rep(NA, 1000)
+
+# For each bootstrap iteration...
+for(i in 1:1000){
+  # Sample with replacement from df
+  bootstrap_df <- df[sample(nrow(df), replace = TRUE), ]
+  
+  # Calculate forecast
+  sample_mean_bootstrap <- mean(bootstrap_df$revenue_growth, na.rm = TRUE)
+  sample_sd_bootstrap <- sd(bootstrap_df$revenue_growth, na.rm = TRUE)
+  posterior_mean_bootstrap <- (prior_mean / prior_sd^2 + sample_mean_bootstrap / sample_sd_bootstrap^2) / (1 / prior_sd^2 + 1 / sample_sd_bootstrap^2)
+  forecast_bootstrap <- bootstrap_df$revenue_GrossYQ * (1 + posterior_mean_bootstrap)
+  
+  # Store result
+  bootstrap_results[i] <- sum(forecast_bootstrap, na.rm = TRUE)
+}
+
+# Calculate bootstrap confidence interval
+bootstrap_ci <- quantile(bootstrap_results, c(0.025, 0.975))
+print(paste("Bootstrap 95% confidence interval: ", round(bootstrap_ci[1], 2), "-", round(bootstrap_ci[2], 2)))
+#the bootstrap 95% confidence interval is from about XXX million to about XXX million. IT is a quite wide range, indicating an uncertainty about the forecasted revenue. 
+
+
+#### DF with interaction effect
+
+# Load data
+df2 <- Sales_NYC
+
+# Calculate revenue growth and convert month to date
+df2 <- df2 %>%
+  mutate(
+    revenue_growth = ifelse(revenue_GrossYQ_py == 0,
+                            ifelse(revenue_GrossYQ == 0, 0, 1), 
+                            ifelse(revenue_GrossYQ == 0, -1, (revenue_GrossYQ - revenue_GrossYQ_py) / revenue_GrossYQ_py)),
+  )
+
+# Check any NA values in revenue_growth
+if (any(is.na(df2$revenue_growth))) {
+  print("NA values")
+} else {
+  print("no NA values")
+}
+
+# Adjust 2022 numbers based on expert insights
+df2 <- df2 %>%
+  mutate(Region = case_when(
+    sales_country == "US" ~ "US",
+    sales_country == "CA" ~ "CA",
+    sales_country == "BM" ~ "BM",
+    sales_country == "PM" ~ "PM",
+    TRUE ~ "SA"
+  ))
+
+## Create interaction column for Country
+df2 <- df2 %>%
+  mutate(
+    country_factor = case_when(
+      sales_country == "US" ~ 0.8/0.7, # US is expected to recover 
+      sales_country == "CA" ~ 1.2, # Canada can be pushed further in the coming months
+      Region == "SA" ~ 0.8, # Depreciation of the local currency is hitting South America & especially BR hard
+      TRUE ~ 1
+    )
+  )
+
+# Calculate the sample mean and standard deviation of the revenue growth
+sample_mean <- mean(df2$revenue_growth, na.rm = TRUE)
+sample_sd <- sd(df2$revenue_growth, na.rm = TRUE)
+
+
+# Define prior mean and standard deviation
+prior_mean <- ((779-727)/727) # Growth in line with IATA article https://www.iata.org/en/pressroom/2022-releases/2022-12-06-01/ . 
+prior_sd <- 3 #Medium standard deviation as historical data are only for 1 year, yet with a large data set
+
+# Calculate the posterior mean and standard deviation
+posterior_mean <- (prior_mean / prior_sd^2 + sample_mean / sample_sd^2) / (1 / prior_sd^2 + 1 / sample_sd^2)
+posterior_sd <- sqrt(1 / (1 / prior_sd^2 + 1 / sample_sd^2))
+
+# Group the data by month and calculate the mean growth for each month
+df_monthly <- df2 %>%
+  group_by(month_departure_text) %>%
+  summarize(
+    monthly_growth = mean(revenue_growth, na.rm = TRUE)
+  )
+
+# Join the monthly growth rates back to the original data
+df2 <- df2 %>%
+  left_join(df_monthly, by = "month_departure_text")
+
+# Print the posterior mean and standard deviation
+print(paste("Posterior mean: ", round(posterior_mean, 2)))
+print(paste("Posterior standard deviation: ", round(posterior_sd, 2)))
+
+# Calculate forecasted revenue for 2023
+df2$revenue_GrossYQ_2023 <- df2$revenue_GrossYQ * (1 + posterior_mean*df2$monthly_growth* df2$country_factor )
+
+# Print out the forecasted revenue
+sum(df2$revenue_GrossYQ_2023)
+sum(df2$revenue_GrossYQ)
+
+# Visualise it
+ggplot(data = df2, aes(x = month_departure_text, y = revenue_GrossYQ_2023)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Month", y = "Revenue", title = "Forecast by month") +
+  theme_minimal()
+
+#Convert data to long format
+df2_long <- df2 %>%
+  select(month_departure_text, revenue_GrossYQ_py, revenue_GrossYQ, revenue_GrossYQ_2023) %>%
+  rename(revenue_GrossYQ_2021 = revenue_GrossYQ_py,
+         revenue_GrossYQ_2022 = revenue_GrossYQ ,
+         revenue_GrossYQ_2023 = revenue_GrossYQ_2023) %>%
+  pivot_longer(cols = starts_with("revenue"),
+               names_to = "Year",
+               values_to = "Revenue")
+
+#Plot the bar chart
+ggplot(df2_long, aes(x = month_departure_text, y = Revenue, fill = Year)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Month", y = "Revenue", fill = "Year", title = "Revenue comparison by month") +
+  theme_minimal()
+
+#Print results
+summary_table2 <- df2_long %>%
+  group_by(Year, month_departure_text) %>%
+  summarize(Revenue = sum(Revenue))
+
+print(summary_table2)
+
+################# TEST #############################
+##Cross-Validation test
+# Split data into training and test set
+set.seed(123456)
+train_ind <- sample(seq_len(nrow(df2)), size = 0.8*nrow(df2))
+train_df2 <- df2[train_ind, ]
+test_df2 <- df2[-train_ind, ]
+
+# Estimate model parameters using training data and calculate forecast
+sample_mean_train <- mean(train_df2$revenue_growth, na.rm = TRUE)
+sample_sd_train <- sd(train_df2$revenue_growth, na.rm = TRUE)
+posterior_mean_train <- (prior_mean / prior_sd^2 + sample_mean_train / sample_sd_train^2) / (1 / prior_sd^2 + 1 / sample_sd_train^2)
+
+# Predict on test set
+test_df2$predicted_revenue <- test_df2$revenue_GrossYQ * (1 + posterior_mean_train)
+
+# Calculate prediction error
+prediction_error <- mean((test_df2$predicted_revenue - test_df2$revenue_GrossYQ)^2, na.rm = TRUE)
+print(paste("Prediction error: ", round(prediction_error, 2)))
+print(paste("Prediction error %: ", round(prediction_error/sum(df2$revenue_GrossYQ_2023),6)))
+
+###Bootstrap Resampling
+# Initialize a vector to store bootstrap results
+bootstrap_results <- rep(NA, 1000)
+
+# For each bootstrap iteration...
+for(i in 1:1000){
+  # Sample with replacement from df2
+  bootstrap_df2 <- df2[sample(nrow(df2), replace = TRUE), ]
+  
+  # Calculate forecast
+  sample_mean_bootstrap <- mean(bootstrap_df2$revenue_growth, na.rm = TRUE)
+  sample_sd_bootstrap <- sd(bootstrap_df2$revenue_growth, na.rm = TRUE)
+  posterior_mean_bootstrap <- (prior_mean / prior_sd^2 + sample_mean_bootstrap / sample_sd_bootstrap^2) / (1 / prior_sd^2 + 1 / sample_sd_bootstrap^2)
+  forecast_bootstrap <- bootstrap_df2$revenue_GrossYQ * (1 + posterior_mean_bootstrap)
+  
+  # Store result
+  bootstrap_results[i] <- sum(forecast_bootstrap, na.rm = TRUE)
+}
+
+# Calculate bootstrap confidence interval
+bootstrap_ci <- quantile(bootstrap_results, c(0.025, 0.975))
+print(paste("Bootstrap 95% confidence interval: ", round(bootstrap_ci[1], 2), "-", round(bootstrap_ci[2], 2)))
+
+#the bootstrap 95% confidence interval is from about 562.7 million to about 587.9 million. IT is a quite wide range, indicating an uncertainty about the forecasted revenue. 
+
+
+######################  Top  ###########################
+### Top 3 sales country
+df2 %>%
+  group_by(sales_country) %>%
+  summarise(
+    growth = (sum(revenue_GrossYQ_2023) - sum(revenue_GrossYQ)) / sum(revenue_GrossYQ),
+    total_revenue_2023 = sum(revenue_GrossYQ_2023)
+  ) %>%
+  arrange(desc(total_revenue_2023)) %>%
+  head(5)
+
+### Top Journey
+df2 %>%
+  group_by(journey_ond_city_cd) %>%
+  summarise(total_revenue_2023 = sum(revenue_GrossYQ_2023)) %>%
+  arrange(desc(total_revenue_2023)) %>%
+  head(5)
+
+### Rank Operating Carrier
+df2 %>%
+  group_by(operating_carrier) %>%
+  summarise(
+    growth = (sum(revenue_GrossYQ_2023) - sum(revenue_GrossYQ)) / sum(revenue_GrossYQ),
+    total_revenue_2023 = sum(revenue_GrossYQ_2023)
+  ) %>%
+  arrange(desc(total_revenue_2023))
+
+
+### Rank Sales_channel
+df2 %>%
+  group_by(sales_channel) %>%
+  summarise(
+    growth = (sum(revenue_GrossYQ_2023) - sum(revenue_GrossYQ)) / sum(revenue_GrossYQ),
+    total_revenue_2023 = sum(revenue_GrossYQ_2023),
+    total_revenue_2022 = sum(revenue_GrossYQ)
+  ) %>%
+  arrange(desc(total_revenue_2023))
+
+
+####################### MAP ##################################
+data_aggregated_Dpt <- df %>%
+  group_by(Dpt_CNTRY_NM) %>%
+  summarise(revenue_GrossYQ_2023_sum = sum(revenue_GrossYQ_2023, na.rm = TRUE))
+
+
+###Look at departure countries in volume of coupons
+# Get world map data
+world_map <- getMap()
+
+# Join the world map data with your aggregated data
+data_map <- joinCountryData2Map(data_aggregated_Dpt, joinCode = "NAME", nameJoinColumn = "Dpt_CNTRY_NM")
+
+# Create the map with leaflet
+leaflet(data = data_map) %>%
+  addTiles() %>%
+  addPolygons(fillColor = ~colorNumeric(palette = "viridis", domain = data_map$revenue_GrossYQ_2023_sum)(revenue_GrossYQ_2023_sum),
+              fillOpacity = 0.8, 
+              color = "#BDBDC3", 
+              weight = 1) %>%
+  addLegend(pal = colorNumeric(palette = "viridis", domain = data_map$revenue_GrossYQ_2023_sum), 
+            values = data_map$revenue_GrossYQ_2023_sum, 
+            title = "Revenue Gross by Departure",
+            opacity = 1)
+
+data_aggregated_Arr <- df %>%
+  group_by(Arr_CNTRY_NM) %>%
+  summarise(revenue_GrossYQ_2023_sum = sum(revenue_GrossYQ_2023, na.rm = TRUE))
+
+###Look at destination countries in volume of coupons
+# Get world map data
+world_map <- getMap()
+
+# Join the world map data with your aggregated data
+data_map <- joinCountryData2Map(data_aggregated_Arr, joinCode = "NAME", nameJoinColumn = "Arr_CNTRY_NM")
+
+# Create the map with leaflet
+leaflet(data = data_map) %>%
+  addTiles() %>%
+  addPolygons(fillColor = ~colorNumeric(palette = "viridis", domain = data_map$revenue_GrossYQ_2023_sum)(revenue_GrossYQ_2023_sum),
+              fillOpacity = 0.8, 
+              color = "#BDBDC3", 
+              weight = 1) %>%
+  addLegend(pal = colorNumeric(palette = "viridis", domain = data_map$revenue_GrossYQ_2023_sum), 
+            values = data_map$revenue_GrossYQ_2023_sum, 
+            title = "Revenue Gross by Arrival",
+            opacity = 1)
+
+
+
